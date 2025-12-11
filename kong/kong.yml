@@ -1,0 +1,29 @@
+_format_version: "3.0"
+_transform: true
+
+services:
+  - name: api-gateway-service
+    url: http://api-gateway:8000
+    routes:
+      - name: api-gateway-route
+        paths:
+          - /
+        strip_path: false
+
+plugins:
+  # Rate limiting global: 10 req/min por IP
+  - name: rate-limiting
+    enabled: true
+    service: api-gateway-service
+    config:
+      minute: 10          # 10 requisições por minuto
+      policy: local       # contador na memória do Kong
+      limit_by: ip        # limita por IP
+
+  # Limite de tamanho de request: ~200KB
+  - name: request-size-limiting
+    enabled: true
+    service: api-gateway-service
+    config:
+      allowed_payload_size: 200   # inteiro
+      size_unit: kilobytes        # unidade em KB
