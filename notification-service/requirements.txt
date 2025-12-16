@@ -1,3 +1,1 @@
-fastapi
-uvicorn[standard]
-aio_pika
+aio-pika==9.4.3

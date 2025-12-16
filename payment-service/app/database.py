@@ -1,16 +1,24 @@
 import os
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import declarative_base, sessionmaker
 
-DB_USER = os.getenv("DB_USER", "payment_user")
-DB_PASS = os.getenv("DB_PASS", "payment_password")
-DB_NAME = os.getenv("DB_NAME", "payment_db")
-DB_HOST = os.getenv("DB_HOST", "payment-postgres")
-DB_PORT = os.getenv("DB_PORT", "5432")
+# Ex.: postgresql+psycopg2://user:pass@host:5432/db
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql+psycopg2://postgres:postgres@localhost:5432/payments",
+)
 
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, future=True)
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, future=True)
 
 Base = declarative_base()
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

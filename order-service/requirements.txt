@@ -1,6 +1,6 @@
-fastapi
-uvicorn[standard]
-motor
-pymongo
-aiokafka
-pydantic
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+pymongo[srv]>=4.6
+kafka-python>=2.0.2
+python-dotenv>=1.0.0

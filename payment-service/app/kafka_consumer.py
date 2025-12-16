@@ -1,94 +1,144 @@
-import os
-import json
 import asyncio
-import logging
-from datetime import datetime
+import json
+import os
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from typing import Any, Dict, Optional
 
 from aiokafka import AIOKafkaConsumer
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
-from .database import SessionLocal
-from .models import Payment
-from .rabbitmq_publisher import send_notification as publish_notification
+from app.database import SessionLocal
+from app.models import Payment, PaymentStatus
+from app.rabbitmq_publisher import send_notification
 
-logger = logging.getLogger(__name__)
+KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+TOPIC = os.getenv("KAFKA_TOPIC", "order-payments")
+GROUP_ID = os.getenv("KAFKA_GROUP_ID", "payment-service")
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
-PAYMENT_TOPIC = os.getenv("PAYMENT_TOPIC", "order-payments")
 
+def _to_decimal_amount(val: Any) -> Decimal:
+    """Converte valores (str/float/int/Decimal) para Decimal com 2 casas."""
+    if val is None:
+        raise ValueError("amount ausente")
 
-async def process_event(event: dict):
-    """
-    Recebe o evento do order-service e cria um Payment + envia notificação.
-    """
-    logger.info("[payment-service] Processando evento: %s", event)
-
-    order_id = event.get("order_id")
-    client_id = event.get("client_id")
-    client_name = event.get("client_name")
-    total_amount = event.get("total_amount") or event.get("amount")
-
-    payment_info = event.get("payment") or {}
-    method = payment_info.get("method")
-    card_last_digits = payment_info.get("card_last_digits")
-
-    if not order_id or client_id is None or client_name is None or total_amount is None:
-        logger.error("[payment-service] Evento inválido, campos faltando: %s", event)
-        return
-
-    db: Session = SessionLocal()
     try:
+        d = Decimal(str(val))
+    except (InvalidOperation, ValueError) as e:
+        raise ValueError(f"amount inválido: {val}") from e
+
+    return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _extract_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Compatibilidade com variações de evento
+    order_id = payload.get("order_id") or payload.get("id") or payload.get("orderId")
+    if not order_id:
+        raise ValueError("order_id ausente")
+
+    client_id = payload.get("client_id") or payload.get("clientId")
+    client_name = payload.get("client_name") or payload.get("clientName")
+
+    raw_amount = payload.get("total_amount")
+    if raw_amount is None:
+        raw_amount = payload.get("amount")
+
+    amount = _to_decimal_amount(raw_amount)
+
+    payment_type = payload.get("payment_type")
+    if not payment_type and isinstance(payload.get("payment"), dict):
+        payment_type = payload["payment"].get("type")
+
+    payment_type = payment_type or "CREDIT_CARD"
+
+    status = payload.get("payment_status") or payload.get("status") or PaymentStatus.PAID
+    # Normaliza string
+    status = str(status).upper()
+    if status not in {"PAID", "FAILED", "PENDING"}:
+        status = "PAID"
+
+    return {
+        "order_id": str(order_id),
+        "client_id": int(client_id) if client_id is not None else None,
+        "client_name": str(client_name) if client_name is not None else None,
+        "amount": amount,
+        "payment_type": str(payment_type),
+        "status": status,
+    }
+
+
+def _save_payment(
+    *,
+    order_id: str,
+    client_id: Optional[int],
+    client_name: Optional[str],
+    amount: Decimal,
+    payment_type: str,
+    status: str,
+) -> Payment:
+    """Cria (ou retorna existente) garantindo idempotência por order_id."""
+    db = SessionLocal()
+    try:
+        existing = db.query(Payment).filter(Payment.order_id == order_id).first()
+        if existing:
+            return existing
+
         payment = Payment(
             order_id=order_id,
             client_id=client_id,
             client_name=client_name,
-            amount=float(total_amount),
-            method=method or "unknown",
-            card_last_digits=card_last_digits,
-            status="PAID",
-            created_at=datetime.utcnow(),
+            amount=amount,
+            payment_type=payment_type,
+            status=PaymentStatus(status),
         )
         db.add(payment)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            # Se outro consumer/processo inseriu antes
+            existing = db.query(Payment).filter(Payment.order_id == order_id).first()
+            if existing:
+                return existing
+            raise
         db.refresh(payment)
-
-        msg = f"{client_name}, seu pedido {order_id} foi PAGO com sucesso e será despachado em breve"
-        publish_notification(msg)
-        logger.info(
-            "[payment-service] Payment criado id=%s e notificação enviada",
-            payment.id,
-        )
-
-    except Exception as e:
-        db.rollback()
-        logger.exception("[payment-service] Erro ao salvar pagamento: %s", e)
+        return payment
     finally:
         db.close()
 
 
-async def consume_payments():
-    """
-    Consumer Kafka que fica ouvindo o tópico de pagamentos.
-    """
-    logger.info(
-        "[payment-service] Iniciando consumidor Kafka em %s, tópico %s",
-        KAFKA_BOOTSTRAP,
-        PAYMENT_TOPIC,
-    )
-
+async def consume_forever() -> None:
+    """Loop principal do consumer (para rodar em background task)."""
     consumer = AIOKafkaConsumer(
-        PAYMENT_TOPIC,
-        bootstrap_servers=KAFKA_BOOTSTRAP,
-        value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+        TOPIC,
+        bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+        group_id=GROUP_ID,
         enable_auto_commit=True,
-        auto_offset_reset="earliest",
+        value_deserializer=lambda v: v,
     )
 
     await consumer.start()
     try:
         async for msg in consumer:
-            event = msg.value
-            await process_event(event)
+            try:
+                raw = msg.value.decode("utf-8") if isinstance(msg.value, (bytes, bytearray)) else str(msg.value)
+                payload = json.loads(raw)
+
+                fields = _extract_fields(payload)
+                payment = _save_payment(**fields)
+
+                # Publica notificação (await!)
+                await send_notification(
+                    fields.get("client_name"),
+                    fields["order_id"],
+                    status=str(payment.status.value),
+                    amount=str(payment.amount),
+                )
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                # Evita matar o consumer por uma mensagem ruim
+                print(f"[payment-service] Erro processando msg Kafka: {e}")
+
     finally:
         await consumer.stop()
-        logger.info("[payment-service] Consumer Kafka parado")

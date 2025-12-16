@@ -1,64 +1,49 @@
-# app/crud.py
-from typing import List, Optional
-from uuid import uuid4
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Dict, List, Optional, Tuple
 
-from . import schemas
+from bson import ObjectId
+from pymongo.collection import Collection
+from pymongo import DESCENDING
 
-COLLECTION_NAME = "orders"
-
-
-def _calc_total(items: List[schemas.OrderItem]) -> Decimal:
-    total = Decimal("0.00")
-    for item in items:
-        total += Decimal(str(item.price)) * item.quantity
-    return total
-
-
-async def create_order(db, payload: schemas.OrderCreate) -> dict:
-    total_amount = _calc_total(payload.items)
-    order_id = str(uuid4())
-    now = datetime.utcnow()
-
-    items_serialized = []
-    for item in payload.items:
-        items_serialized.append(
-            {
-                "product_id": item.product_id,
-                "quantity": item.quantity,
-                "price": float(item.price),
-            }
-        )
-
-    order_doc = {
-        "id": order_id,
-        "client_id": payload.client_id,
-        "client_name": payload.client_name,        # <- aqui
-        "items": items_serialized,
-        "total_amount": float(total_amount),
-        "status": "PENDING",
-        "created_at": now,
-        "payment": payload.payment.model_dump(),
-    }
-
-    await db[COLLECTION_NAME].insert_one(order_doc)
-    order_doc.pop("_id", None)
-    return order_doc
-
-
-async def list_orders(db) -> List[dict]:
-    cursor = db[COLLECTION_NAME].find({})
-    orders = []
-    async for doc in cursor:
-        doc.pop("_id", None)
-        orders.append(doc)
-    return orders
-
-
-async def get_order(db, order_id: str) -> Optional[dict]:
-    doc = await db[COLLECTION_NAME].find_one({"id": order_id})
-    if not doc:
-        return None
-    doc.pop("_id", None)
+def _serialize(doc: Dict[str, Any]) -> Dict[str, Any]:
+    doc = dict(doc)
+    doc["id"] = str(doc.pop("_id"))
+    # total_amount pode ser string/float; normalize pra string pra depois virar Decimal no schema
+    if "total_amount" in doc and not isinstance(doc["total_amount"], str):
+        doc["total_amount"] = str(doc["total_amount"])
     return doc
+
+def create_order(
+    orders: Collection,
+    *,
+    client_id: int,
+    client_name: Optional[str],
+    items: List[Dict[str, Any]],
+    total_amount: Decimal,
+) -> Dict[str, Any]:
+    doc = {
+        "client_id": client_id,
+        "client_name": client_name,
+        "items": items,
+        "total_amount": str(total_amount),
+        "status": "CREATED",
+        "created_at": datetime.utcnow(),
+    }
+    res = orders.insert_one(doc)
+    doc["_id"] = res.inserted_id
+    return _serialize(doc)
+
+def list_orders(orders: Collection, *, skip: int = 0, limit: int = 50) -> List[Dict[str, Any]]:
+    cursor = orders.find().sort("created_at", DESCENDING).skip(skip).limit(limit)
+    return [_serialize(d) for d in cursor]
+
+def get_order(orders: Collection, order_id: str) -> Optional[Dict[str, Any]]:
+    try:
+        oid = ObjectId(order_id)
+    except Exception:
+        return None
+    doc = orders.find_one({"_id": oid})
+    return _serialize(doc) if doc else None

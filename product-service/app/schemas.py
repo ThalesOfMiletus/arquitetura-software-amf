@@ -1,24 +1,35 @@
 # app/schemas.py
-from pydantic import BaseModel, condecimal
 from typing import Optional
+from pydantic import BaseModel, ConfigDict, Field, condecimal, conint
+
+
+Price = condecimal(gt=0, max_digits=10, decimal_places=2)
+Stock = conint(ge=0)
+
 
 class ProductBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    price: condecimal(max_digits=10, decimal_places=2)
-    stock: int
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=500)
+    price: Price
+    stock: Stock = 0
+
 
 class ProductCreate(ProductBase):
     pass
 
+
 class ProductUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    price: Optional[condecimal(max_digits=10, decimal_places=2)] = None
-    stock: Optional[int] = None
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=500)
+    price: Optional[Price] = None
+    stock: Optional[Stock] = None
+
+
+class StockUpdate(BaseModel):
+    stock: Stock
+
 
 class ProductOut(ProductBase):
     id: int
 
-    class Config:
-        orm_mode = True
+    model_config = ConfigDict(from_attributes=True)
