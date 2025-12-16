@@ -8,7 +8,6 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.database import get_database, get_orders_collection
-from app.kafka_producer import OrderEventProducer  # ajuste o nome se o teu producer tiver outro
 from app.kafka_producer import OrderEventProducer
 
 producer = OrderEventProducer()

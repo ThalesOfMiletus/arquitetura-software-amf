@@ -9,6 +9,32 @@ from app.database import Base, engine, get_db
 from app.kafka_consumer import consume_forever
 from app.models import Payment
 from app.schemas import HealthOut, PaymentOut, PaymentTypeOut
+import hashlib
+import json
+from fastapi import Request, Response
+
+def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool = False) -> None:
+    cc = f"public, max-age={ttl_seconds}"
+    # s-maxage ajuda cache compartilhado (proxy/gateway)
+    cc += f", s-maxage={ttl_seconds}"
+    if immutable:
+        cc += ", immutable"
+    response.headers["Cache-Control"] = cc
+
+def set_etag_and_maybe_304(request: Request, response: Response, payload) -> bool:
+    """
+    Gera ETag baseado no payload e devolve 304 se o cliente já tiver a mesma versão.
+    Retorna True se já respondeu 304.
+    """
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    etag = hashlib.sha1(raw).hexdigest()
+    response.headers["ETag"] = etag
+
+    inm = request.headers.get("if-none-match")
+    if inm and inm.strip('"') == etag:
+        response.status_code = 304
+        return True
+    return False
 
 
 @asynccontextmanager
@@ -53,10 +79,19 @@ def get_payment(payment_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/payments/types", response_model=List[PaymentTypeOut])
-def payment_types():
-    # Mantém compatível com teu endpoint atual
-    return [
+def payment_types(request: Request, response: Response):
+    payload = [
         PaymentTypeOut(code="CREDIT_CARD", label="Cartão de Crédito"),
         PaymentTypeOut(code="PIX", label="Pix"),
         PaymentTypeOut(code="BOLETO", label="Boleto"),
     ]
+
+    # "TTL infinito" na prática: 1 ano + immutable
+    set_cache_headers(response, 31536000, immutable=True)
+
+    # ETag para 304
+    payload_list = [p.model_dump() for p in payload]
+    if set_etag_and_maybe_304(request, response, payload_list):
+        return Response(status_code=304)
+
+    return payload

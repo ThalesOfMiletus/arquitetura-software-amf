@@ -5,6 +5,32 @@ from typing import List
 
 from .database import Base, engine, get_db
 from . import crud, schemas
+import hashlib
+import json
+from fastapi import Request, Response
+
+def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool = False) -> None:
+    cc = f"public, max-age={ttl_seconds}"
+    # s-maxage ajuda cache compartilhado (proxy/gateway)
+    cc += f", s-maxage={ttl_seconds}"
+    if immutable:
+        cc += ", immutable"
+    response.headers["Cache-Control"] = cc
+
+def set_etag_and_maybe_304(request: Request, response: Response, payload) -> bool:
+    """
+    Gera ETag baseado no payload e devolve 304 se o cliente já tiver a mesma versão.
+    Retorna True se já respondeu 304.
+    """
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    etag = hashlib.sha1(raw).hexdigest()
+    response.headers["ETag"] = etag
+
+    inm = request.headers.get("if-none-match")
+    if inm and inm.strip('"') == etag:
+        response.status_code = 304
+        return True
+    return False
 
 # cria tabelas automaticamente (pra trabalho acadêmico serve bem;
 # em produção usamos Alembic)
@@ -29,11 +55,25 @@ def create_product(payload: schemas.ProductCreate, db: Session = Depends(get_db)
 
 @app.get("/products", response_model=List[schemas.ProductOut])
 def list_products(
+    request: Request,
+    response: Response,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    return crud.list_products(db, skip=skip, limit=limit)
+    products = crud.list_products(db, skip=skip, limit=limit)
+
+    # TTL 4 horas
+    set_cache_headers(response, 14400)
+
+    # transforma em lista de dicts pra ETag ficar estável
+    payload_list = [schemas.ProductOut.model_validate(p).model_dump() for p in products]
+
+    if set_etag_and_maybe_304(request, response, payload_list):
+        return Response(status_code=304)
+
+    return products
+
 
 
 @app.get("/products/{product_id}", response_model=schemas.ProductOut)
