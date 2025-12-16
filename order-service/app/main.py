@@ -7,7 +7,13 @@ from bson import ObjectId
 from .database import orders_collection
 from .schemas import OrderCreate, OrderResponse
 from .kafka_producer import send_order_payment_event
+from .kafka_producer import close_producer
 
+app = FastAPI()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await close_producer()
 app = FastAPI(
     title="order-service",
     version="1.0.0",
