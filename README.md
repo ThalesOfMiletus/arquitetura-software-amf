@@ -56,9 +56,10 @@ Ao final, o script imprime:
 - `order_id`
 - `payment_id`
 
-Se quiser acompanhar logs enquanto roda:
+Se quiser acompanhar logs enquanto roda: (Para validar a notificação criada via evento RabbitMQ)
 
 ```bash
+docker compose logs -f notification-service 
 docker compose logs -f order-service
 docker compose logs -f payment-service
 ```
@@ -124,7 +125,7 @@ Se estiver ok, o segundo `curl` deve retornar **HTTP 304**.
 ```bash
 curl -s -X POST http://localhost:8001/clients \
   -H "Content-Type: application/json" \
-  -d '{"name":"Thales","email":"thales@teste.com","password":"123456"}'
+  -d '{"name":"Augusto","email":"augusto@teste.com","password":"123456"}'
 ```
 
 **Listar clientes**
@@ -155,7 +156,7 @@ curl -s http://localhost:8002/health
 ```bash
 curl -s -X POST http://localhost:8002/products \
   -H "Content-Type: application/json" \
-  -d '{"name":"Cafe","price":20.00,"stock":50}'
+  -d '{"name":"Bolo","price":30.00,"stock":50}'
 ```
 
 **Listar produtos (paginação)**
@@ -206,8 +207,8 @@ curl -s http://localhost:8003/health
 curl -s -X POST http://localhost:8003/orders \
   -H "Content-Type: application/json" \
   -d '{
-    "client_id": 1,
-    "client_name": "Thales",
+    "client_id": 2,
+    "client_name": "Augusto",
     "items": [
       {"product_id": 1, "quantity": 2, "price": 20.00},
       {"product_id": 2, "quantity": 1, "price": 7.00}
