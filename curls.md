@@ -128,14 +128,6 @@ curl -i http://localhost:8000/payments/1
 # Substitua 1 pelo ID real do pagamento
 ```
 
-### 4.3 Listar tipos de pagamento (rota cacheada, TTL infinito)
-
-```bash
-curl -i http://localhost:8000/payments/types
-```
-
----
-
 ## 5. Health do API Gateway (extra)
 
 > Útil para checar rapidamente se o gateway continua de pé durante os testes.
@@ -213,15 +205,3 @@ curl -i http://localhost:8000/health
    ```bash
    curl -i http://localhost:8000/payments/<PAYMENT_ID>
    ```
-
-9. **Ver tipos de pagamento (rota cacheada)**
-
-   ```bash
-   curl -i http://localhost:8000/payments/types
-   ```
-
-```
-
-Se quiser depois eu monto uma versão `.sh` de novo baseada nesse `.md`, mas agora com comentários mais “didáticos” pro professor.
-::contentReference[oaicite:0]{index=0}
-```

@@ -119,11 +119,6 @@ curl -i "$BASE_URL/payments/$PAYMENT_ID"
 echo -e "\n\n"
 sleep 3
 
-echo "=== 4.3 Listar tipos de pagamento (rota cacheada, TTL infinito) ==="
-curl -i "$BASE_URL/payments/types"
-echo -e "\n\n"
-sleep 3
-
 ########################################
 # 5. ROTAS DE SAÚDE
 ########################################
