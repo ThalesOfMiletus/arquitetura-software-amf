@@ -12,6 +12,7 @@ from app.schemas import HealthOut, PaymentOut, PaymentTypeOut
 import hashlib
 import json
 from fastapi import Request, Response
+from fastapi.encoders import jsonable_encoder
 
 def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool = False) -> None:
     cc = f"public, max-age={ttl_seconds}"
@@ -22,11 +23,14 @@ def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool =
     response.headers["Cache-Control"] = cc
 
 def set_etag_and_maybe_304(request: Request, response: Response, payload) -> bool:
-    """
-    Gera ETag baseado no payload e devolve 304 se o cliente já tiver a mesma versão.
-    Retorna True se já respondeu 304.
-    """
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = jsonable_encoder(payload)
+    raw = json.dumps(
+        encoded,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
     etag = hashlib.sha1(raw).hexdigest()
     response.headers["ETag"] = etag
 
@@ -35,6 +39,7 @@ def set_etag_and_maybe_304(request: Request, response: Response, payload) -> boo
         response.status_code = 304
         return True
     return False
+
 
 
 @asynccontextmanager
@@ -70,7 +75,7 @@ def list_payments(
     return db.query(Payment).order_by(Payment.id.desc()).offset(skip).limit(limit).all()
 
 
-@app.get("/payments/{payment_id}", response_model=PaymentOut)
+@app.get("/payments/{payment_id:int}", response_model=PaymentOut)
 def get_payment(payment_id: int, db: Session = Depends(get_db)):
     payment = db.query(Payment).filter(Payment.id == payment_id).first()
     if not payment:

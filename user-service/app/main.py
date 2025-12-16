@@ -8,6 +8,7 @@ from . import models, schemas, crud
 import hashlib
 import json
 from fastapi import Request, Response
+from fastapi.encoders import jsonable_encoder
 
 def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool = False) -> None:
     cc = f"public, max-age={ttl_seconds}"
@@ -18,11 +19,14 @@ def set_cache_headers(response: Response, ttl_seconds: int, *, immutable: bool =
     response.headers["Cache-Control"] = cc
 
 def set_etag_and_maybe_304(request: Request, response: Response, payload) -> bool:
-    """
-    Gera ETag baseado no payload e devolve 304 se o cliente já tiver a mesma versão.
-    Retorna True se já respondeu 304.
-    """
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = jsonable_encoder(payload)
+    raw = json.dumps(
+        encoded,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
     etag = hashlib.sha1(raw).hexdigest()
     response.headers["ETag"] = etag
 
@@ -67,13 +71,9 @@ def get_client(
     if not user:
         raise HTTPException(status_code=404, detail="Client not found")
 
-    # TTL 1 dia
     set_cache_headers(response, 86400)
 
-    # serializa pro schema (pra ETag ficar estável)
-    payload_dict = schemas.UserOut.model_validate(user).model_dump()
-
-    if set_etag_and_maybe_304(request, response, payload_dict):
+    if set_etag_and_maybe_304(request, response, user):
         return Response(status_code=304)
 
     return user
